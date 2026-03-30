@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import sys
 import types
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol, Union, get_type_hints, get_origin, get_args
+from typing import Any, Callable, Protocol, TypeVar, Union, get_type_hints, get_origin, get_args
 
 
 def _serialize(val: Any) -> Any:
@@ -23,7 +24,7 @@ def _serialize(val: Any) -> Any:
 def _unwrap_optional(tp: Any) -> Any:
     origin = get_origin(tp)
     args = get_args(tp)
-    if origin is Union or isinstance(tp, types.UnionType):
+    if origin is Union or (sys.version_info >= (3, 10) and isinstance(tp, types.UnionType)):
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:
             return non_none[0]
@@ -45,6 +46,9 @@ def _deserialize(val: Any, field_type: Any) -> Any:
     return val
 
 
+_T = TypeVar("_T", bound="BaseModel")
+
+
 @dataclass
 class BaseModel:
     """Base class for all generated model types."""
@@ -60,7 +64,7 @@ class BaseModel:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> Any:
+    def from_dict(cls: type[_T], data: Union[dict[str, Any], None] = None) -> _T:
         """Create an instance from a dict."""
         if not data:
             return cls()
@@ -116,7 +120,7 @@ class EventHeader:
     event_created_at: str = "0"
 
 
-WrappedEventHandler = Callable[[EventHeader, bytes | str], None]
+WrappedEventHandler = Callable[[EventHeader, Union[bytes, str]], None]
 
 
 class ApiClient(Protocol):

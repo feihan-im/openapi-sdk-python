@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Callable, TYPE_CHECKING
+from typing import Any, Callable, Union, TYPE_CHECKING
 
 from feihan.core.types import EventHeader, WrappedEventHandler
 from feihan.service.im.v1.message_model import (
@@ -29,7 +29,7 @@ class MessageEvent:
 
     def on_message_receive(self, handler: Callable[[EventMessageReceive], None]) -> None:
         """接收消息"""
-        def wrapped_handler(header: EventHeader, body: bytes | str) -> None:
+        def wrapped_handler(header: EventHeader, body: Union[bytes, str]) -> None:
             parsed = json.loads(body) if isinstance(body, (bytes, bytearray)) else json.loads(body)
             handler(EventMessageReceive(header=header, body=EventMessageReceiveBody.from_dict(parsed)))
         self._handler_map[handler] = wrapped_handler
