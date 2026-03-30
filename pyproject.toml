@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "feihan-sdk"
-version = "0.28.100"
+version = "0.28.107"
 description = "飞函官方 OpenAPI SDK for Python"
 readme = "README.md"
 license = "Apache-2.0"
