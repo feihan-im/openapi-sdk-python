@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 RECONNECT_CHECK_INTERVAL = 10.0
 HEALTH_CHECK_INTERVAL = 20.0
-ALIVE_TIMEOUT = 40.0
+ALIVE_TIMEOUT = 40_000  # ms, compared with get_system_timestamp()
 CONNECT_TIMEOUT = 5.0
 WRITE_TIMEOUT = 60.0
 
@@ -60,7 +60,7 @@ class WsClient:
         self._req_count = 0
         self._req_callbacks: dict[str, asyncio.Future[HttpResponse]] = {}
         self._reconnect_attempt = 0
-        self._last_message_at = 0.0
+        self._last_message_at: int = 0
         self._tasks: list[asyncio.Task[Any]] = []
         self._init_done = False
         self._init_task: asyncio.Task[None] | None = None
@@ -185,7 +185,7 @@ class WsClient:
             if "init_response" not in ws_msg:
                 raise RuntimeError("unexpected message during init")
 
-            self._last_message_at = time.time()
+            self._last_message_at = self._config.time_manager.get_system_timestamp()
             self._start_health_check()
             self._start_reconnect_check()
             self._start_message_loop()
@@ -215,7 +215,7 @@ class WsClient:
                 self._schedule_reconnect()
 
     async def _handle_message(self, data: bytes) -> None:
-        self._last_message_at = time.time()
+        self._last_message_at = self._config.time_manager.get_system_timestamp()
 
         secure_msg = decode_secure_message(data)
         decrypted = self._crypto_manager.decrypt_message(self._get_secret(), secure_msg)
@@ -267,11 +267,11 @@ class WsClient:
         if self._should_close:
             return
         delay = self._get_reconnect_delay()
-        self._config.logger.info("ws reconnecting in %.1fs (attempt %d)", delay, self._reconnect_attempt + 1)
+        self._config.logger.info("ws reconnecting in %.1fs (attempt %d)", delay, self._reconnect_attempt)
+        self._reconnect_attempt += 1
 
         async def do_reconnect() -> None:
             await asyncio.sleep(delay)
-            self._reconnect_attempt += 1
             try:
                 await self._connect()
                 self._config.logger.info("ws reconnected")
@@ -284,13 +284,13 @@ class WsClient:
 
     def _get_reconnect_delay(self) -> float:
         attempt = self._reconnect_attempt
-        if attempt == 0:
+        if attempt <= 1:
             return 0.25 + random.random() * 0.25
-        if attempt <= 4:
+        if attempt <= 5:
             return 0.75 + random.random() * 0.5
-        base = min(10.0, max(0.75, (attempt - 4) * 2.0))
-        jitter = random.random()
-        return min(15.0, base + jitter)
+        lo = min(10.0, max(0.75, (attempt - 5 - 1) * 2.0))
+        hi = min(15.0, 1.0 + (attempt - 5) * 2.0)
+        return lo + random.random() * (hi - lo)
 
     def _start_health_check(self) -> None:
         async def check() -> None:
@@ -309,7 +309,7 @@ class WsClient:
         async def check() -> None:
             while not self._should_close:
                 await asyncio.sleep(RECONNECT_CHECK_INTERVAL)
-                if time.time() - self._last_message_at > ALIVE_TIMEOUT:
+                if self._last_message_at != 0 and self._config.time_manager.get_system_timestamp() - self._last_message_at > ALIVE_TIMEOUT:
                     self._config.logger.warn("ws alive timeout, reconnecting")
                     if self._socket:
                         try:

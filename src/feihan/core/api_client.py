@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import string
@@ -64,6 +65,8 @@ class DefaultApiClient:
         self._token = ""
         self._token_refresh_at: int = 0
         self._token_expires_at: int = 0
+        self._token_fetching = False
+        self._token_lock: asyncio.Lock = asyncio.Lock()
         self._ping_called = False
         self._ping_expires_at: int = 0
         self._crypto_manager = CryptoManager(config)
@@ -101,9 +104,7 @@ class DefaultApiClient:
 
         url = self._config.backend_url + path
         if req.query_params:
-            filtered = {k: v for k, v in req.query_params.items() if v}
-            if filtered:
-                url += "?" + urlencode(filtered)
+            url += "?" + urlencode(req.query_params)
 
         # Encrypted path
         if self._config.enable_encryption and req.with_app_access_token:
@@ -129,6 +130,8 @@ class DefaultApiClient:
 
             # WebSocket path
             if req.with_web_socket:
+                if "Authorization" not in headers:
+                    headers["Authorization"] = f"Bearer {token}"
                 http_resp = await self._ws.http_request(http_req)
                 data = _unwrap_api_response(json.loads(http_resp.body))
                 return ApiResponse(data)
@@ -189,12 +192,29 @@ class DefaultApiClient:
     async def _get_token(self) -> str:
         now = self._config.time_manager.get_server_timestamp()
 
+        # Token still fully valid
         if self._token and self._token_refresh_at > now:
             return self._token
 
+        # Token expired or missing — block and fetch
         if not self._token or self._token_expires_at <= now:
-            await self._fetch_token()
+            async with self._token_lock:
+                # Re-check after acquiring lock
+                if not self._token or self._token_expires_at <= self._config.time_manager.get_server_timestamp():
+                    await self._fetch_token()
             return self._token
+
+        # Token near expiry — return current, refresh in background
+        if not self._token_fetching:
+            self._token_fetching = True
+
+            async def _bg_refresh() -> None:
+                try:
+                    await self._fetch_token()
+                finally:
+                    self._token_fetching = False
+
+            asyncio.ensure_future(_bg_refresh())
 
         return self._token
 
